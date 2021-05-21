@@ -1,0 +1,29 @@
+[tasks]
+prf     prf
+cvr     cvr
+bmc     bmc
+
+[options]
+prf: mode prove
+prf: depth 12
+
+cvr: mode cover
+cvr: depth 20
+
+bmc: mode bmc
+bmc: depth 20
+
+[engines]
+# prf: smtbmc
+prf: abc pdr
+
+[script]
+read -formal ready_skid.v
+--pycode-begin--
+cmd = "hierarchy -top ready_skid"
+output(cmd);
+--pycode-end--
+prep -top ready_skid
+
+[files]
+ready_skid.v

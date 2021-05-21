@@ -46,6 +46,7 @@ reg backup_valid;
 reg internal_valid_o /* synthesis preserve */;
 reg internal_ready_i /* synthesis preserve */;
 
+`ifndef FORMAL
 // simulation only sanity check
 always @(posedge clk) begin
 	if ((ready_i != internal_ready_i) || 
@@ -53,11 +54,17 @@ always @(posedge clk) begin
 		$display ("Error: Duplicate internal regs out of sync");	
 	end
 end
+`else
+always @(posedge clk) begin
+    assert(ready_i == internal_ready_i);
+    assert(valid_o == internal_valid_o);
+end
+`endif
 
 always @(posedge clk or posedge arst) begin
 	if (arst) begin
-		ready_i <= 1'b0;
-		internal_ready_i <= 1'b0;
+		ready_i <= 1'b1;
+		internal_ready_i <= 1'b1;
 		valid_o <= 1'b0;
 		internal_valid_o <= 1'b0;
 		dat_o <= 0;
@@ -105,5 +112,79 @@ always @(posedge clk or posedge arst) begin
 		end			
 	end
 end
+
+`ifdef FORMAL
+	reg	f_past_valid;
+
+	initial	f_past_valid = 0;
+	always @(posedge clk)
+		f_past_valid <= 1;
+
+	always @(*)
+	if (!f_past_valid)
+		assume(arst);
+	
+    ////////////////////////////////////////////////////////////////////////
+	// Incoming stream properties / assumptions
+	////////////////////////////////////////////////////////////////////////
+	//
+	always @(posedge clk)
+	if (!f_past_valid) begin
+		assume property(!valid_i);
+    end else if ($past(valid_i && !ready_i && !arst) && !arst) begin
+	    assume property(valid_i && $stable(dat_i));
+    end
+	
+    ////////////////////////////////////////////////////////////////////////
+	// Outgoing stream properties / assumptions
+	////////////////////////////////////////////////////////////////////////
+	//
+    always @(posedge clk)
+        if (!f_past_valid) begin
+            // Following any reset, valid must be deasserted
+            assert property(!valid_o);
+        end else if ($past(valid_o && !ready_o && !arst) && !arst) begin
+            // Following any stall, valid must remain high and
+            // data must be preserved
+            assert property(valid_o && $stable(dat_o));
+        end
+
+	////////////////////////////////////////////////////////////////////////
+	// Other properties
+	////////////////////////////////////////////////////////////////////////
+	//
+    // Rule #1:
+    //	If registered, then following any reset we should be
+    //	ready for a new request
+    always @(posedge clk)
+        if (f_past_valid && $past(arst))
+            prf_rst_rdy: assert property(ready_i);
+
+    // Rule #2:
+    //	All incoming data must either go directly to the
+    //	output port, or into the skid buffer
+    always @(posedge clk)
+        if(f_past_valid && !arst && !$past(arst) && $past(valid_i && ready_i && valid_o && !ready_o))
+            prf_dat: assert(!ready_i && backup_storage == $past(dat_i));
+
+    // Rule #3:
+    //	After the last transaction, valid_o should become idle
+    always @(posedge clk)
+        if (f_past_valid && !arst && !$past(arst)) begin
+            if ($past(valid_i && ready_i))
+                assert(valid_o);
+
+            if ($past(!valid_i && ready_i && ready_o))
+                assert(!valid_o);
+        end
+
+    // Rule #4
+    //	Same thing, but this time for ready_i
+	always @(posedge clk)
+		if (f_past_valid && !arst && $past(!arst && !ready_i && ready_o))
+			prf_rdy: assert property(ready_i);
+
+
+`endif
 
 endmodule
